@@ -1,9 +1,12 @@
-name: CI/CD Pipeline
+name: CI/CD Helm Chart Pipeline
 on:
   push:
     branches: [main]
 permissions:
   contents: write
+
+env:
+  CHART_DIR: charts/nginx-helloworld
 
 jobs:
   build-and-push:
@@ -11,64 +14,56 @@ jobs:
     outputs:
       image-tag: ${{ steps.vars.outputs.IMAGE_TAG }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-      
+      - uses: actions/checkout@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
-      
+
       - name: Login to DockerHub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-      
-      - name: Generate simple IMAGE_TAG
+
+      - name: Generate IMAGE_TAG
         id: vars
         run: |
-          IMAGE_TAG="v$(date +'%Y%m%d-%H%M')"
-          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_OUTPUT
-          echo "Generated IMAGE_TAG: $IMAGE_TAG"
-      
-      - name: Build and push images
+          TAG="v$(date +'%Y%m%d-%H%M%S')"
+          echo "IMAGE_TAG=$TAG" >> $GITHUB_OUTPUT
+          echo "Generated IMAGE_TAG: $TAG"
+
+      - name: Build and push Docker images
         uses: docker/build-push-action@v4
         with:
           push: true
           tags: |
-            {{ docker_username }}/nginx-helloworld:${{ steps.vars.outputs.IMAGE_TAG }}
-            {{ docker_username }}/nginx-helloworld:latest
+            ${{ secrets.DOCKER_USERNAME }}/nginx-helloworld:${{ steps.vars.outputs.IMAGE_TAG }}
+            ${{ secrets.DOCKER_USERNAME }}/nginx-helloworld:latest
 
   update-chart:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v3
         with:
           persist-credentials: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Update Chart values or deployment manifest
+
+      - name: Update Helm Chart values.yaml
         run: |
-          # Caso use Helm Chart:
           yq e -i ".image.tag = \"${{ needs.build-and-push.outputs.image-tag }}\"" $CHART_DIR/values.yaml
-          # Caso use manifest k8s:
-          sed -i 's|image:.*|image: gustaavolp/nginx-helloworld:${{ needs.build-and-push.outputs.image-tag }}|g' k8s/deployment.yaml
-          echo "Tag atualizada para: ${{ needs.build-and-push.outputs.image-tag }}"
-      
-      - name: Commit changes
+          echo "Chart values updated to tag: ${{ needs.build-and-push.outputs.image-tag }}"
+
+      - name: Commit and push chart update
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          if git diff --quiet; then
-            echo "Nenhuma mudança detectada"
-            exit 0
-          fi
-          git add $CHART_DIR/values.yaml k8s/deployment.yaml || true
-          git commit -m "ci: update image tag to ${{ needs.build-and-push.outputs.image-tag }}"
-          git push origin main
+          git add $CHART_DIR/values.yaml
+          git diff --quiet && exit 0 || (
+            git commit -m "ci: bump chart image tag to ${{ needs.build-and-push.outputs.image-tag }}" &&
+            git push origin main
+          )
 
-  deploy-argocd:
+  sync-argocd:
     needs: update-chart
     runs-on: ubuntu-latest
     steps:
