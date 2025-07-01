@@ -67,9 +67,19 @@ jobs:
     needs: update-chart
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger ArgoCD sync
-        uses: azure/argocd-sync-action@v1
-        with:
-          argocd_server: ${{ secrets.ARGOCD_SERVER }}
-          argocd_token: ${{ secrets.ARGOCD_TOKEN }}
-          app_name: nginx-helloworld-app
+      - name: Install ArgoCD CLI
+        run: |
+          curl -sSL -o argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          chmod +x argocd
+          sudo mv argocd /usr/local/bin/
+
+      - name: Login to ArgoCD
+        env:
+          ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
+          ARGOCD_TOKEN: ${{ secrets.ARGOCD_TOKEN }}
+        run: |
+          argocd login $ARGOCD_SERVER --plaintext --token $ARGOCD_TOKEN
+
+      - name: Sync Application
+        run: |
+          argocd app sync nginx-helloworld-app
