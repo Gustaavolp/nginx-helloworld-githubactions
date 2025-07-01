@@ -1,20 +1,24 @@
 name: CI/CD Helm Chart Pipeline
+
 on:
   push:
     branches: [main]
+
 permissions:
-  contents: write
+  contents: write   # permite usar GITHUB_TOKEN para commit
 
 env:
   CHART_DIR: charts/nginx-helloworld
 
 jobs:
   build-and-push:
+    name: Build & Push Docker Image
     runs-on: ubuntu-latest
     outputs:
-      image-tag: ${{ steps.vars.outputs.IMAGE_TAG }}
+      image-tag: ${{ steps.tag.outputs.IMAGE_TAG }}
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
@@ -26,29 +30,31 @@ jobs:
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Generate IMAGE_TAG
-        id: vars
+        id: tag
         run: |
-          TAG="v$(date +'%Y%m%d-%H%M%S')"
-          echo "IMAGE_TAG=$TAG" >> $GITHUB_OUTPUT
-          echo "Generated IMAGE_TAG: $TAG"
+          IMAGE_TAG="v$(date +'%Y%m%d-%H%M%S')"
+          echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "Generated IMAGE_TAG: $IMAGE_TAG"
 
       - name: Build and push Docker images
         uses: docker/build-push-action@v4
         with:
           push: true
           tags: |
-            ${{ secrets.DOCKER_USERNAME }}/nginx-helloworld:${{ steps.vars.outputs.IMAGE_TAG }}
+            ${{ secrets.DOCKER_USERNAME }}/nginx-helloworld:${{ steps.tag.outputs.IMAGE_TAG }}
             ${{ secrets.DOCKER_USERNAME }}/nginx-helloworld:latest
 
   update-chart:
+    name: Update Helm Chart
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
         with:
           persist-credentials: true
 
-      - name: Update Helm Chart values.yaml
+      - name: Update values.yaml with new image tag
         run: |
           yq e -i ".image.tag = \"${{ needs.build-and-push.outputs.image-tag }}\"" $CHART_DIR/values.yaml
           echo "Chart values updated to tag: ${{ needs.build-and-push.outputs.image-tag }}"
@@ -58,12 +64,15 @@ jobs:
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add $CHART_DIR/values.yaml
-          git diff --quiet && exit 0 || (
-            git commit -m "ci: bump chart image tag to ${{ needs.build-and-push.outputs.image-tag }}" &&
+          if git diff --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "ci: bump chart image tag to ${{ needs.build-and-push.outputs.image-tag }}"
             git push origin main
-          )
+          fi
 
   sync-argocd:
+    name: Sync ArgoCD Application
     needs: update-chart
     runs-on: ubuntu-latest
     steps:
@@ -76,9 +85,9 @@ jobs:
       - name: Login to ArgoCD
         env:
           ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
-          ARGOCD_TOKEN: ${{ secrets.ARGOCD_TOKEN }}
+          ARGOCD_PASSWORD: ${{ secrets.ARGOCD_PASSWORD }}
         run: |
-          argocd login $ARGOCD_SERVER --plaintext --token $ARGOCD_TOKEN
+          argocd login $ARGOCD_SERVER --plaintext --username admin --password $ARGOCD_PASSWORD
 
       - name: Sync Application
         run: |
