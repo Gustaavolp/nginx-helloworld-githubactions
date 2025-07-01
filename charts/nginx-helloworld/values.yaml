@@ -1,0 +1,10 @@
+replicaCount: 2
+image:
+  repository: gustaavolp/nginx-helloworld
+  pullPolicy: IfNotPresent
+  tag: "latest"
+service:
+  type: ClusterIP
+  port: 80
+podAnnotations: {}
+resources: {}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: nginx-helloworld
+description: Helm chart para deploy de nginx-helloworld via ArgoCD
+type: application
+version: 0.1.0
+appVersion: "1.0"
